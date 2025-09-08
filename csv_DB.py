@@ -31,7 +31,6 @@ def csv_data_format():
             print("データベースに接続しました。データを取得しています...")
             
             # 実行するSQLクエリを定義 (text()で囲むことを推奨)
-            # idの昇順でデータを取得
             query = text('SELECT id, "件数", "緯度", "経度" FROM "CSV_data" ORDER BY id;')
 
             # クエリを実行し、結果を受け取る
@@ -39,7 +38,6 @@ def csv_data_format():
 
             # 結果セットの各行を辞書に変換し、リストに追加
             for row in result_proxy:
-                # row._mapping を使うと、カラム名をキーにした辞書ライクなオブジェクトが取得できる
                 results_list.append(dict(row._mapping))
             
             print(f"✅ {len(results_list)}件のデータを取得しました。")
@@ -47,12 +45,11 @@ def csv_data_format():
     except OperationalError as e:
         print(f"❌ データベースへの接続に失敗しました: {e}")
         print("ヒント: DATABASE_URLが正しいか、ネットワーク接続が有効か確認してください。")
-        return [] # エラー時は空のリストを返す
+        return []
     except Exception as e:
         print(f"❌ 予期せぬエラーが発生しました: {e}")
-        return [] # エラー時は空のリストを返す
+        return []
 
-    # 最終的に取得したデータのリストを返す
     return results_list
 
 # --- このファイルが直接実行された場合のサンプルコード ---
@@ -63,10 +60,9 @@ if __name__ == "__main__":
 
     # 取得したデータがあれば表示する
     if example_csv_data:
-        print("\n--- 取得したデータの先頭5件 ---")
-        # データが多すぎる場合があるので、先頭の5件だけ表示
-        for record in example_csv_data[:5]:
+        print("\n--- 取得したデータ ---")
+        for record in example_csv_data:   # ★ 制限を外した
             print(record)
         
         print("\n---")
-        print(f"（合計{len(example_csv_data)}件中、先頭5件を表示しました）")
+        print(f"（合計{len(example_csv_data)}件を表示しました）")
