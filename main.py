@@ -1,10 +1,11 @@
 # ファイル名: main.py (修正後)
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from pydantic import BaseModel  # ← ここを修正しました
 from typing import List, Dict, Any
-
+from sqlalchemy.orm import Session
+from . import models, schemas, database
 # 天気シミュレーション関連の関数をインポート
 from weather_simulator import simulate_journey_and_get_weather
 # 事故データ関連の関数をインポート
@@ -67,6 +68,32 @@ async def run_weather_simulation(route_data: RouteData) -> Dict[str, Any]:
         "nearby_accident_data": nearby_accident_data,
         "nearby_braking_events": nearby_braking_events
     }
+
+@app.post("/braking-events/", response_model=schemas.BrakingEvent)
+def create_braking_event(
+    event: schemas.BrakingEventCreate,
+    db: Session = Depends(database.get_db)
+):
+    """
+    新しいブレーキイベントを作成し、データベースに保存する。
+
+    - **latitude**: 緯度
+    - **longitude**: 経度
+    """
+    # 受け取ったデータ(event)を、DBモデル(models.BrakingEvent)に変換
+    db_event = models.BrakingEvent(
+        latitude=event.latitude,
+        longitude=event.longitude
+    )
+
+    # データベースセッションに追加
+    db.add(db_event)
+    # データベースに変更をコミット（保存）
+    db.commit()
+    # データベースから最新の状態を読み込む（IDやcreated_atなどを取得するため）
+    db.refresh(db_event)
+
+    return db_event
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
