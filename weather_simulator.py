@@ -186,7 +186,7 @@ def simulate_journey_and_get_weather(ordered_route_data: List[List[float]], aver
         
     return _generate_weather_report(route_with_timestamps, interval_km=15.0)
 
-# --- ここから追加した機能 ---
+# --- ここからが新しいDB関連の機能 ---
 
 def setup_demo_database(db_path='locations.db'):
     """ デモ用のSQLiteデータベースとテーブルを作成し、サンプルデータを挿入する """
@@ -225,23 +225,13 @@ def setup_demo_database(db_path='locations.db'):
 def filter_csv_data_around_route(route_points: List[List[float]], db_path: str, radius_km: float) -> List[Dict[str, Any]]:
     """
     指定されたルートの周辺にあるDBデータ(CSV_data)を効率的にフィルタリングして取得する
-    
-    Args:
-        route_points: ルートを構成する[緯度, 経度]のリスト
-        db_path: SQLiteデータベースファイルのパス
-        radius_km: ルートから「周辺」とみなす半径(km)
-
-    Returns:
-        条件に合致したデータの辞書のリスト
     """
     if not route_points:
         return []
 
-    # 1. ルート全体を囲む矩形領域（バウンディングボックス）を計算
     lats = [p[0] for p in route_points]
     lons = [p[1] for p in route_points]
     
-    # 矩形領域を半径分だけ少し広げ、検索漏れを防ぐ
     margin_lat = radius_km / 111.0
     margin_lon = radius_km / (111.0 * np.cos(np.radians(np.mean(lats))))
 
@@ -252,7 +242,6 @@ def filter_csv_data_around_route(route_points: List[List[float]], db_path: str, 
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # 2. SQLで矩形領域内のデータに一次絞り込み（高速化のため）
         query = """
         SELECT 件数, 緯度, 経度 
         FROM CSV_data 
@@ -265,68 +254,17 @@ def filter_csv_data_around_route(route_points: List[List[float]], db_path: str, 
         if not candidate_points:
             return []
 
-        # 3. 候補の中から、ルート上のいずれかの点から半径以内にあるものだけを厳選
         nearby_data = []
         for data_point in candidate_points:
             data_count, data_lat, data_lon = data_point
             
-            for route_lat, route_lon, *_ in route_points: # *でタイムスタンプなどがあっても無視
+            for route_lat, route_lon, *_ in route_points:
                 if haversine(route_lat, route_lon, data_lat, data_lon) <= radius_km:
                     nearby_data.append({'件数': data_count, '緯度': data_lat, '経度': data_lon})
-                    break # 一つでも近ければOKなので、次のDBデータポイントのチェックに移る
+                    break 
         
         return nearby_data
 
     except sqlite3.Error as e:
         print(f"データベースエラーが発生しました: {e}")
         return []
-
-# --- このファイルが直接実行された場合に以下のテストコードが動きます ---
-if __name__ == '__main__':
-    # --- デモの準備 ---
-    db_file = 'locations.db'
-    # デモ用のDBとテーブル、サンプルデータを作成（初回実行時のみ）
-    setup_demo_database(db_file)
-
-    # 東京駅から新大阪駅までのサンプルルート (緯度, 経度)
-    sample_route = [
-        [35.681236, 139.767125],  # 東京駅
-        [35.465780, 139.622340],  # 横浜駅
-        [35.170915, 136.881537],  # 名古屋駅
-        [34.733333, 135.500000],  # 新大阪駅
-    ]
-
-    # --- ★新しく追加した関数のテスト実行★ ---
-    print("\n--- ルート周辺のDBデータ抽出テスト ---")
-    search_radius_km = 50.0 # ルートから半径50km以内を検索
-    filtered_data = filter_csv_data_around_route(sample_route, db_file, search_radius_km)
-    
-    print(f"\nルート周辺（半径{search_radius_km}km）から {len(filtered_data)} 件のデータが見つかりました。")
-    # 抽出されたデータを表示（札幌や那覇のデータは除外されているはず）
-    for item in filtered_data:
-        print(f"  - 件数: {item['件数']}, 緯度: {item['緯度']:.4f}, 経度: {item['経度']:.4f}")
-    
-    print("\n" + "="*50 + "\n")
-
-    # --- 既存の天気シミュレーション機能の実行 ---
-    print("--- 天気シミュレーションテスト ---")
-    if os.getenv("YAHOO_API_KEY"):
-        start_datetime = datetime(2025, 9, 12, 9, 0) # 未来の日時でシミュレーション
-        weather_results = simulate_journey_and_get_weather(sample_route, average_speed_kmh=100.0, start_time=start_datetime)
-
-        if weather_results:
-            print("\n--- シミュレーション結果 ---")
-            for point_weather in weather_results:
-                dt = datetime.fromtimestamp(point_weather['timestamp'])
-                dist_km = point_weather['distance_km']
-                weather = point_weather['weather']
-                temp = weather.get('temperature')
-                rain = weather.get('rainfall_mm_h')
-                desc = weather.get('description')
-                
-                print(f"地点 (距離: {dist_km:.1f} km, 時刻: {dt.strftime('%H:%M')})")
-                print(f"  - 天気: {desc}, 気温: {temp}°C, 降水量: {rain} mm/h")
-        else:
-            print("天気情報の取得に失敗しました。")
-    else:
-        print("YAHOO_API_KEYが.envファイルに設定されていないため、天気シミュレーションはスキップします。")
