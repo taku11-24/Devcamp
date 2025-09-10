@@ -2,6 +2,7 @@ fastapi
 uvicorn
 psycopg2-binary
 SQLAlchemy
-dotenv
 requests
 numpy
+sqlalchemy
+python-dotenv

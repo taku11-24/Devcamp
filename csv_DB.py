@@ -1,42 +1,61 @@
+# ファイル名: csv_DB.py
+
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
+from typing import List, Optional
 
-def csv_data_format():
+# ★★★ ここを修正 ★★★
+def csv_data_format(points: Optional[List[List[float]]] = None, buffer: float = 0.5):
     """
-    データベースに接続し、'CSV_data'テーブルから全てのデータを取得して、
-    辞書の配列（リスト）として返します。
+    データベースから事故データを取得します。
+    - pointsが指定された場合：経路周辺のデータを【最大20件】取得します。
+    - pointsが指定されない場合：全てのデータを取得します。
     """
-    # .envファイルから環境変数を読み込む
     load_dotenv()
-
-    # .envファイルからデータベース接続URLを取得
     database_url = os.getenv("DATABASE_URL")
 
-    # データベースURLが設定されていない場合はエラーメッセージを表示して終了
     if not database_url:
         print("エラー: .envファイルにDATABASE_URLが設定されていません。")
         return []
 
-    # 取得したデータを格納するための空のリストを準備
     results_list = []
-
     try:
-        # データベースエンジンを作成
         engine = create_engine(database_url)
-
-        # 'with'構文を使い、接続の開始と終了を自動で管理
         with engine.connect() as connection:
-            print("データベースに接続しました。データを取得しています...")
             
-            # 実行するSQLクエリを定義 (text()で囲むことを推奨)
-            query = text('SELECT id, "件数", "緯度", "経度" FROM "CSV_data" ORDER BY id;')
+            base_query = 'SELECT id, "件数", "緯度", "経度" FROM "CSV_data"'
+            params = {}
+            
+            if points and len(points) > 0:
+                # ★★★ 検索範囲が広がります ★★★
+                print(f"経路周辺のデータを【最大20件】で検索します... (検索バッファ: {buffer})")
+                lats = [p[0] for p in points]
+                lons = [p[1] for p in points]
+                
+                min_lat, max_lat = min(lats) - buffer, max(lats) + buffer
+                min_lon, max_lon = min(lons) - buffer, max(lons) + buffer
+                
+                where_clause = ' WHERE "緯度" BETWEEN :min_lat AND :max_lat AND "経度" BETWEEN :min_lon AND :max_lon'
+                limit_clause = ' LIMIT 20'
+                
+                final_query_str = f'{base_query}{where_clause} ORDER BY id{limit_clause};'
+                params = {
+                    "min_lat": min_lat,
+                    "max_lat": max_lat,
+                    "min_lon": min_lon,
+                    "max_lon": max_lon,
+                }
+            else:
+                print("全てのデータを取得します...")
+                final_query_str = f'{base_query} ORDER BY id;'
+            
+            query = text(final_query_str)
 
-            # クエリを実行し、結果を受け取る
-            result_proxy = connection.execute(query)
-
-            # 結果セットの各行を辞書に変換し、リストに追加
+            print("データベースからデータを取得しています...")
+            result_proxy = connection.execute(query, params)
+            
             for row in result_proxy:
                 results_list.append(dict(row._mapping))
             
@@ -44,25 +63,9 @@ def csv_data_format():
 
     except OperationalError as e:
         print(f"❌ データベースへの接続に失敗しました: {e}")
-        print("ヒント: DATABASE_URLが正しいか、ネットワーク接続が有効か確認してください。")
         return []
     except Exception as e:
         print(f"❌ 予期せぬエラーが発生しました: {e}")
         return []
 
     return results_list
-
-# --- このファイルが直接実行された場合のサンプルコード ---
-if __name__ == "__main__":
-    
-    # 関数を呼び出してデータを取得
-    example_csv_data = csv_data_format()
-
-    # 取得したデータがあれば表示する
-    if example_csv_data:
-        print("\n--- 取得したデータ ---")
-        for record in example_csv_data:   # ★ 制限を外した
-            print(record)
-        
-        print("\n---")
-        print(f"（合計{len(example_csv_data)}件を表示しました）")
