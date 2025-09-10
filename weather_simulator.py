@@ -23,21 +23,19 @@ def wmo_code_to_description(code):
 # Part 2: コアロジック関数群 (天気取得関数を修正)
 # ==============================================================================
 
-# ★★★ 天気取得関数を、日付に応じてURLを切り替えるように修正 ★★★
+# ★★★ この関数のみを修正 ★★★
 def _get_weather_for_point_open_meteo(point):
     """
     Open-Meteo APIを使い、特定の地点・時刻の天気情報を取得する。
     日付に応じて、履歴APIと予報APIを自動で切り替える。
+    指定時刻のデータがない場合、最も近い時刻のデータで代用する。
     """
     dt_object = datetime.fromtimestamp(point['timestamp'])
     today = date.today()
 
-    # 問い合わせる日付が過去か、今日・未来かでAPIのURLを決定
     if dt_object.date() < today:
-        # 過去のデータは履歴API (archive-api) を使用
         base_url = "https://archive-api.open-meteo.com/v1/archive"
     else:
-        # 今日・未来のデータは予報API (api) を使用
         base_url = "https://api.open-meteo.com/v1/forecast"
 
     date_str = dt_object.strftime('%Y-%m-%d')
@@ -47,7 +45,6 @@ def _get_weather_for_point_open_meteo(point):
         'hourly': 'temperature_2m,weather_code',
         'timezone': 'auto'
     }
-    # 履歴APIはstart_dateとend_dateが必要
     if "archive" in base_url:
         params['start_date'] = date_str
         params['end_date'] = date_str
@@ -57,23 +54,54 @@ def _get_weather_for_point_open_meteo(point):
         response.raise_for_status()
         weather_data = response.json()
 
+        # API応答に'hourly'データが存在するかチェック
+        if 'hourly' not in weather_data or not weather_data['hourly'].get('time'):
+            print(f"警告: APIから有効な hourly データが返されませんでした。")
+            return None
+
         hourly_data = weather_data['hourly']
-        timestamps = hourly_data['time']
+        api_time_strings = hourly_data['time']
         target_hour_str = dt_object.strftime('%Y-%m-%dT%H:00')
         
+        found_idx = -1
         try:
-            idx = timestamps.index(target_hour_str)
-            temperature = hourly_data['temperature_2m'][idx]
-            weather_code = hourly_data['weather_code'][idx]
-            return {'temperature': temperature, 'description': wmo_code_to_description(weather_code)}
+            # まず、目的の時刻と完全に一致するものを探す
+            found_idx = api_time_strings.index(target_hour_str)
         except ValueError:
-            print(f"警告: 指定時刻 {target_hour_str} のデータが見つかりません。")
-            return None
+            # ★★★ ここからが修正部分 ★★★
+            # 完全に一致する時刻がない場合、最も近い時刻を探す
+            print(f"警告: 指定時刻 {target_hour_str} が見つかりません。最も近い時刻のデータを検索します...")
+            
+            target_ts = point['timestamp']
+            min_diff = float('inf')
+            
+            for i, time_str in enumerate(api_time_strings):
+                api_dt = datetime.fromisoformat(time_str)
+                api_ts = int(api_dt.timestamp())
+                diff = abs(target_ts - api_ts)
+                
+                if diff < min_diff:
+                    min_diff = diff
+                    found_idx = i
+            
+            if found_idx != -1:
+                closest_time_str = api_time_strings[found_idx]
+                print(f"-> 最も近い時刻: {closest_time_str} のデータを採用します。 (誤差: {min_diff/60:.1f}分)")
+            else:
+                # このケースは稀だが、念のため
+                print(f"警告: 近い時刻のデータも見つかりませんでした。")
+                return None
+            # ★★★ 修正部分ここまで ★★★
+        
+        temperature = hourly_data['temperature_2m'][found_idx]
+        weather_code = hourly_data['weather_code'][found_idx]
+        return {'temperature': temperature, 'description': wmo_code_to_description(weather_code)}
+
     except requests.exceptions.RequestException as e:
         print(f"エラー: Open-Meteoからの天気情報取得に失敗しました: {e}")
         return None
 
-# (_sample_route_by_distance と _generate_weather_report は前回の全文コードと同じ)
+# (_sample_route_by_distance と _generate_weather_report は変更なし)
 def _sample_route_by_distance(route_data_with_timestamps, interval_km):
     if not route_data_with_timestamps: return []
     sampled_points = []
@@ -129,7 +157,7 @@ def simulate_journey_and_get_weather(
     return _generate_weather_report(route_with_estimated_timestamps, interval_km=15.0)
 
 # ==============================================================================
-# Part 4: 実行ブロック (2つのテストケース)
+# Part 4: 実行ブロック (変更なし)
 # ==============================================================================
 
 if __name__ == '__main__':
