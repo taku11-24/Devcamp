@@ -1,6 +1,6 @@
-from sqlalchemy import Column, Integer, Float, DateTime
-from sqlalchemy.sql import func
-from .database import Base
+from sqlalchemy import Column, Integer, Float
+# DateTime と func は不要になったため import から削除
+from database import Base
 
 class BrakingEvent(Base):
     __tablename__ = "BrakingEvents"
@@ -8,4 +8,3 @@ class BrakingEvent(Base):
     id = Column(Integer, primary_key=True, index=True)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())

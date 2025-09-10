@@ -1,18 +1,18 @@
 from pydantic import BaseModel
-from datetime import datetime
+# datetime は不要になったため import から削除
 
-# リクエストボディの形式を定義
+# リクエストボディの形式 (変更なし)
 class BrakingEventCreate(BaseModel):
     latitude: float
     longitude: float
 
-# レスポンスの形式を定義
+# レスポンスの形式 (created_at を削除)
 class BrakingEvent(BaseModel):
     id: int
     latitude: float
     longitude: float
-    created_at: datetime
+    # 以下の created_at の行を削除（またはコメントアウト）します
+    # created_at: datetime
 
-    # SQLAlchemyモデルからPydanticモデルに変換できるように設定
     class Config:
         orm_mode = True
