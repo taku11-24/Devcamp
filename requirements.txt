@@ -6,3 +6,4 @@ requests
 numpy
 sqlalchemy
 python-dotenv
+pydantic

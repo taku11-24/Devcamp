@@ -1,24 +1,24 @@
-# ファイル名: braking_data_handler.py
-
 import os
-import math
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 from typing import List, Dict, Any
 
+# モジュール読み込み時に一度だけ環境変数をロード
+load_dotenv()
+
 def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dict[str, Any]]:
     """
-    指定された座標に最も近い急ブレーキイベントを最大20件、データベースから取得する。
-    
+    指定された座標に最も近い急ブレーキイベントをデータベースから最大20件取得する。
+    Haversine公式を用いて、データベース側で距離計算とソートを行う。
+
     Args:
         target_lat (float): 中心の緯度
         target_lon (float): 中心の経度
 
     Returns:
-        List[Dict[str, Any]]: 取得したイベントのリスト。各辞書には距離(km)も含まれる。
+        List[Dict[str, Any]]: 取得したイベントデータのリスト。各辞書には距離(km)も含まれる。
     """
-    load_dotenv()
     database_url = os.getenv("DATABASE_URL")
 
     if not database_url:
@@ -26,14 +26,11 @@ def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dic
         return []
 
     results_list = []
-
     # 地球の半径 (km)
-    R = 6371
+    EARTH_RADIUS_KM = 6371
 
     # Haversine（ハーベサイン）公式をSQLで計算するクエリ。
-    # これにより、DB内で直接距離を計算し、効率的にソートできる。
     # データベース内の全レコードとの距離を計算し、近い順に20件を取得する。
-    # これが「自動で範囲を広げる」ロジックの実現方法です。
     query = text(f"""
         SELECT
             id,
@@ -41,7 +38,7 @@ def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dic
             longitude,
             event_timestamp,
             (
-                {R} * 2 * ASIN(SQRT(
+                {EARTH_RADIUS_KM} * 2 * ASIN(SQRT(
                     POWER(SIN(RADIANS(latitude - :target_lat) / 2), 2) +
                     COS(RADIANS(:target_lat)) * COS(RADIANS(latitude)) *
                     POWER(SIN(RADIANS(longitude - :target_lon) / 2), 2)
@@ -58,7 +55,7 @@ def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dic
         engine = create_engine(database_url)
         with engine.connect() as connection:
             print(f"データベースに接続し、({target_lat}, {target_lon}) 周辺の急ブレーキデータを検索しています...")
-            
+
             # クエリ実行時に緯度経度をパラメータとして渡す
             result_proxy = connection.execute(query, {
                 "target_lat": target_lat,
@@ -66,15 +63,16 @@ def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dic
             })
 
             for row in result_proxy:
+                # SQLAlchemy 2.0+ の Row._mapping を使用して辞書に変換
                 results_list.append(dict(row._mapping))
-            
-            print(f"✅ {len(results_list)}件のデータを取得しました。")
+
+            print(f"{len(results_list)}件のデータを取得しました。")
 
     except OperationalError as e:
-        print(f"❌ データベースへの接続に失敗しました: {e}")
+        print(f"データベースへの接続に失敗しました: {e}")
         return []
     except Exception as e:
-        print(f"❌ 予期せぬエラーが発生しました: {e}")
+        print(f"予期せぬエラーが発生しました: {e}")
         return []
 
     return results_list
@@ -89,11 +87,10 @@ if __name__ == '__main__':
     if nearest_events_1:
         for event in nearest_events_1:
             print(f"ID: {event['id']}, 距離: {event['distance_km']:.2f} km, 座標: ({event['latitude']}, {event['longitude']})")
-    
+
     print("\n" + "="*50 + "\n")
 
     # テストケース2: 少し離れた場所（鶴舞公園）を指定
-    # 近くにデータは少ないが、名古屋駅や栄、金山のデータが取得されるはず
     print("--- テストケース2: 鶴舞公園周辺 ---")
     test_lat_2, test_lon_2 = 35.155761, 136.921312
     nearest_events_2 = get_nearest_braking_events(test_lat_2, test_lon_2)
