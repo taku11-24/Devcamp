@@ -15,6 +15,7 @@ from braking_data_handler import get_nearest_braking_events
 # --- Pydanticモデルの定義 ---
 class RouteData(BaseModel):
     """フロントエンドから受け取る経路データの形式"""
+    # [[lat, lon, elapsed_seconds], ...] の形式を受け取る
     points: List[List[float]]
 
 # --- FastAPIアプリケーションのインスタンスを作成 ---
@@ -35,23 +36,30 @@ async def run_weather_simulation(route_data: RouteData) -> Dict[str, Any]:
     if not route_data.points:
         raise HTTPException(status_code=400, detail="経路データが空です。")
 
+    # 入力データが [緯度, 経度, 時間] の3つの要素を持っているか確認
+    if len(route_data.points[0]) != 3:
+        raise HTTPException(status_code=400, detail="各地点のデータは [緯度, 経度, 経過秒数] の形式である必要があります。")
+
+
     print(f"POST /weather/simulation: {len(route_data.points)} 地点のシミュレーションを開始します。")
 
     try:
         # 1. 天気シミュレーションを実行
+        # 変更点: average_speed_kmh引数を削除し、新しい形式のデータをそのまま渡す
         weather_report = simulate_journey_and_get_weather(
-            ordered_route_data=route_data.points,
-            average_speed_kmh=40.0
+            ordered_route_data_with_time=route_data.points
         )
 
         # 2. ルート周辺の事故データを取得
+        # 変更点: 入力データから緯度・経度のみを抽出して渡す
         print("データベースからルート周辺の事故データを検索します...")
+        points_lat_lon = [[p[0], p[1]] for p in route_data.points]
         nearby_accident_data = get_accident_data_from_postgres(
-            points=route_data.points,
+            points=points_lat_lon,
             buffer=0.5
         )
 
-        # 3. ルートの開始地点周辺の急ブレーキデータを取得
+        # 3. ルートの開始地点周辺の急ブレーキデータを取得 (この部分は変更不要)
         print("データベースからルート開始地点周辺の急ブレーキデータを検索します...")
         start_point = route_data.points[0]
         start_lat, start_lon = start_point[0], start_point[1]

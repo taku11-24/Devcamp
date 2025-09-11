@@ -19,15 +19,27 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
     return R * c
 
+# --- ここからが変更点 (1/2) ---
 def wmo_code_to_description(code: int) -> str:
-    """ Open-MeteoのWMOコードを日本語の天気概要に変換する """
-    codes = {
-        0: '快晴', 1: '晴れ', 2: '一部曇り', 3: '曇り', 45: '霧', 48: '霧氷',
-        51: '霧雨', 53: '霧雨', 55: '霧雨', 61: '雨', 63: '雨', 65: '雨',
-        71: '雪', 73: '雪', 75: '雪', 80: 'にわか雨', 81: 'にわか雨', 82: 'にわか雨',
-        95: '雷雨', 96: '雷雨と雹', 99: '雷雨と雹'
-    }
-    return codes.get(code, f'不明なコード({code})')
+    """ Open-MeteoのWMOコードを「晴れ」「曇り」「雨」の3種類に集約して変換する """
+    # カテゴリ1: 晴れ
+    if code in [0, 1]:
+        return '晴れ'
+    # カテゴリ2: 曇り (霧も含む)
+    elif code in [2, 3, 45, 48]:
+        return '曇り'
+    # カテゴリ3: 雨 (霧雨、雪、雷雨も含む)
+    elif code in [
+        51, 53, 55,  # 霧雨
+        61, 63, 65,  # 雨
+        71, 73, 75,  # 雪
+        80, 81, 82,  # にわか雨
+        95, 96, 99   # 雷雨
+    ]:
+        return '雨'
+    # 上記のいずれにも当てはまらない不明なコードは「曇り」として扱う
+    else:
+        return '曇り'
 
 def _get_weather_for_points_yahoo(points: List[Dict]) -> List[Dict]:
     """ [Yahoo! API] 複数の地点の天気概要と降水量をまとめて取得する """
@@ -36,7 +48,7 @@ def _get_weather_for_points_yahoo(points: List[Dict]) -> List[Dict]:
     if not api_key:
         print("警告: YAHOO_API_KEYが設定されていません。Yahoo! APIの処理をスキップします。")
         for p in points:
-             p['weather'] = {'description': '（予報なし）', 'rainfall_mm_h': None}
+            p['weather'] = {'description': '（予報なし）', 'rainfall_mm_h': None}
         return points
 
     chunk_size = 10
@@ -65,6 +77,7 @@ def _get_weather_for_points_yahoo(points: List[Dict]) -> List[Dict]:
                 )
                 rainfall = best_forecast.get('Rainfall', 0.0)
                 point['weather'] = {
+                    # Yahoo APIでは降水の有無のみを判定。「降水なし」は後でOpen-Meteo情報で上書きする
                     'description': "雨" if rainfall > 0 else "降水なし",
                     'rainfall_mm_h': rainfall,
                 }
@@ -95,9 +108,7 @@ def _get_open_meteo_data(point: Dict) -> Dict[str, Any] or None:
             api_times_str = hourly.get('time', [])
             if not api_times_str: return None
             
-            # タイムゾーン情報を付与してdatetimeオブジェクトに変換
             api_times = [datetime.fromisoformat(t) for t in api_times_str]
-            # 比較対象のタイムスタンプも同じタイムゾーンに変換
             target_dt = datetime.fromtimestamp(point['timestamp'], tz=api_times[0].tzinfo)
 
             closest_time_idx = min(range(len(api_times)), key=lambda i: abs(api_times[i] - target_dt))
@@ -139,51 +150,64 @@ def _sample_route_by_distance(route_data_with_timestamps: List, interval_km: flo
         cumulative_distance += distance
     return sampled_points
 
+# --- ここからが変更点 (2/2) ---
 def _generate_weather_report(route_data_with_timestamps: List, interval_km: float) -> List[Dict]:
-    """ 2つの天気APIを使い、ルート上の天気レポートを生成する """
+    """ 2つの天気APIを使い、ルート上の天気レポートを生成する（ロジックを改善） """
     sampled_points = _sample_route_by_distance(route_data_with_timestamps, interval_km)
     if not sampled_points: return []
 
-    print("[1/2] Yahoo! APIから基本天気情報を取得中...")
+    print("[1/2] Yahoo! APIから基本天気情報（降水の有無）を取得中...")
     points_with_base_weather = _get_weather_for_points_yahoo(sampled_points)
     
-    print("[2/2] Open-Meteo APIから気温等の補完情報を取得中...")
+    print("[2/2] Open-Meteo APIから詳細天気（晴れ/曇り）と気温を取得中...")
     for point in points_with_base_weather:
         open_meteo_data = _get_open_meteo_data(point)
         
+        # Step 1: Open-Meteoから気温を取得
         if open_meteo_data:
             point['weather']['temperature'] = open_meteo_data['temperature']
-            # Yahoo!で情報が取れなかった場合のみOpen-Meteoの天気概要で上書き
-            if point['weather'].get('description') == '（予報なし）':
-                point['weather']['description'] = open_meteo_data['description']
         else:
             point['weather']['temperature'] = None
+
+        # Step 2: 最終的な天気（晴れ/曇り/雨）を決定するロジック
+        # 優先度1: Yahoo APIが「雨」と判断した場合、最終結果は「雨」
+        if point['weather'].get('description') == '雨':
+            final_description = '雨'
+        # 優先度2: Open-Meteoから情報が取得できた場合、その結果（晴れ/曇り/雨）を採用
+        elif open_meteo_data:
+            final_description = open_meteo_data['description']
+        # 優先度3: Yahoo APIがAPIエラーになった場合
+        elif point['weather'].get('description') == '（予報なし）':
+            final_description = '（予報なし）'
+        # 上記以外（Yahooは「降水なし」で、Open-Meteoは失敗したケース）は「曇り」をデフォルトとする
+        else:
+            final_description = '曇り'
+        
+        # 最終結果を格納
+        point['weather']['description'] = final_description
 
     print("全地点の天気情報取得が完了しました。")
     return points_with_base_weather
 
-def simulate_journey_and_get_weather(ordered_route_data: List[List[float]], average_speed_kmh: float = 40.0, start_time: datetime = None) -> List[Dict[str, Any]]:
+def simulate_journey_and_get_weather(
+    ordered_route_data_with_time: List[List[float]],
+    start_time: datetime = None
+) -> List[Dict[str, Any]]:
     """
-    ルート情報と平均速度から移動シミュレーションを行い、各地点の天気情報を取得する。
+    タイムスタンプ付きのルート情報から、各地点の天気情報を取得する。
     """
-    if not ordered_route_data:
+    if not ordered_route_data_with_time:
         print("エラー: 経路データが空です。"); return []
-    if start_time is None: start_time = datetime.now()
+    if start_time is None:
+        start_time = datetime.now()
 
-    print(f"シミュレーションを開始します... (開始時刻: {start_time.strftime('%Y-%m-%d %H:%M')})")
+    print(f"レポート生成を開始します... (シミュレーション開始時刻: {start_time.strftime('%Y-%m-%d %H:%M')})")
     
+    start_timestamp = start_time.timestamp()
     route_with_timestamps = []
-    current_time_ts = start_time.timestamp()
+    for point in ordered_route_data_with_time:
+        lat, lon, elapsed_seconds = point
+        absolute_timestamp = start_timestamp + elapsed_seconds
+        route_with_timestamps.append([lat, lon, absolute_timestamp])
     
-    first_point = ordered_route_data[0]
-    route_with_timestamps.append([first_point[0], first_point[1], current_time_ts])
-    
-    for i in range(1, len(ordered_route_data)):
-        prev_point, curr_point = ordered_route_data[i-1], ordered_route_data[i]
-        distance = haversine(prev_point[0], prev_point[1], curr_point[0], curr_point[1])
-        travel_time_seconds = (distance / average_speed_kmh) * 3600
-        current_time_ts += travel_time_seconds
-        route_with_timestamps.append([curr_point[0], curr_point[1], current_time_ts])
-        
-    # サンプリング間隔を15kmとして天気レポートを生成
     return _generate_weather_report(route_with_timestamps, interval_km=15.0)
