@@ -222,8 +222,8 @@ def simulate_journey_and_get_weather(
         num_points = (total_distance_km // interval_km) + 1
         
         # 取得する天気予報ポイント数が極端に少なく/多くならないように調整
-        MIN_POINTS = 5  # 少なくともこれくらいの数のポイントは取得したい
-        MAX_POINTS = 15 # 多くてもこれくらいの数のポイントに抑えたい
+        MIN_POINTS = 1  # 少なくともこれくらいの数のポイントは取得したい
+        MAX_POINTS = 100 # 多くてもこれくらいの数のポイントに抑えたい
 
         if num_points < MIN_POINTS:
             # ポイント数が少なすぎる場合、間隔を狭めて MIN_POINTS を確保する
