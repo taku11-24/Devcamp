@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """ 2点間の緯度経度から距離（km）を計算する """
-    R = 6371  # 地球の半径 (km)
+    """ Calculate distance (km) between two lat/lon points using Haversine formula """
+    R = 6371  # Earth radius (km)
     lat1_rad, lon1_rad, lat2_rad, lon2_rad = map(np.radians, [lat1, lon1, lat2, lon2])
     dlon = lon2_rad - lon1_rad
     dlat = lat2_rad - lat1_rad
@@ -19,36 +19,36 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
     return R * c
 
-# --- ここからが変更点 (1/2) ---
+# --- Category translation function ---
 def wmo_code_to_description(code: int) -> str:
-    """ Open-MeteoのWMOコードを「晴れ」「曇り」「雨」の3種類に集約して変換する """
-    # カテゴリ1: 晴れ
+    """ Convert Open-Meteo WMO code into 3 categories: Sunny, Cloudy, Rain """
+    # Category 1: Sunny
     if code in [0, 1]:
-        return '晴れ'
-    # カテゴリ2: 曇り (霧も含む)
+        return 'Sunny'
+    # Category 2: Cloudy (including fog)
     elif code in [2, 3, 45, 48]:
-        return '曇り'
-    # カテゴリ3: 雨 (霧雨、雪、雷雨も含む)
+        return 'Cloudy'
+    # Category 3: Rain (including drizzle, snow, thunderstorms)
     elif code in [
-        51, 53, 55,  # 霧雨
-        61, 63, 65,  # 雨
-        71, 73, 75,  # 雪
-        80, 81, 82,  # にわか雨
-        95, 96, 99   # 雷雨
+        51, 53, 55,  # Drizzle
+        61, 63, 65,  # Rain
+        71, 73, 75,  # Snow
+        80, 81, 82,  # Showers
+        95, 96, 99   # Thunderstorm
     ]:
-        return '雨'
-    # 上記のいずれにも当てはまらない不明なコードは「曇り」として扱う
+        return 'Rain'
+    # Default: treat unknown codes as Cloudy
     else:
-        return '曇り'
+        return 'Cloudy'
 
 def _get_weather_for_points_yahoo(points: List[Dict]) -> List[Dict]:
-    """ [Yahoo! API] 複数の地点の天気概要と降水量をまとめて取得する """
+    """ [Yahoo! API] Get weather summary and rainfall for multiple points """
     base_url = "https://map.yahooapis.jp/weather/V1/place"
     api_key = os.getenv("YAHOO_API_KEY")
     if not api_key:
-        print("警告: YAHOO_API_KEYが設定されていません。Yahoo! APIの処理をスキップします。")
+        print("Warning: YAHOO_API_KEY is not set. Skipping Yahoo! API processing.")
         for p in points:
-            p['weather'] = {'description': '（予報なし）', 'rainfall_mm_h': None}
+            p['weather'] = {'description': 'No forecast', 'rainfall_mm_h': None}
         return points
 
     chunk_size = 10
@@ -63,12 +63,12 @@ def _get_weather_for_points_yahoo(points: List[Dict]) -> List[Dict]:
             weather_data = response.json()
 
             if 'Feature' not in weather_data:
-                raise ValueError("APIレスポンスに 'Feature' キーが含まれていません。")
+                raise ValueError("API response does not contain 'Feature' key.")
 
             for point, weather_feature in zip(chunk, weather_data.get('Feature', [])):
                 all_forecasts = weather_feature.get('Property', {}).get('WeatherList', {}).get('Weather', [])
                 if not all_forecasts:
-                    point['weather'] = {'description': '（予報なし）', 'rainfall_mm_h': None}
+                    point['weather'] = {'description': 'No forecast', 'rainfall_mm_h': None}
                     continue
 
                 best_forecast = min(
@@ -77,18 +77,18 @@ def _get_weather_for_points_yahoo(points: List[Dict]) -> List[Dict]:
                 )
                 rainfall = best_forecast.get('Rainfall', 0.0)
                 point['weather'] = {
-                    # Yahoo APIでは降水の有無のみを判定。「降水なし」は後でOpen-Meteo情報で上書きする
-                    'description': "雨" if rainfall > 0 else "降水なし",
+                    # Yahoo API only indicates presence of precipitation. "No rain" will be refined later by Open-Meteo.
+                    'description': "Rain" if rainfall > 0 else "No rain",
                     'rainfall_mm_h': rainfall,
                 }
         except requests.exceptions.RequestException as e:
-            print(f"警告: Yahoo! Weather APIからの情報取得に失敗しました: {e}")
+            print(f"Warning: Failed to fetch data from Yahoo! Weather API: {e}")
             for point in chunk:
-                point['weather'] = {'description': '（予報なし）', 'rainfall_mm_h': None}
+                point['weather'] = {'description': 'No forecast', 'rainfall_mm_h': None}
     return points
 
 def _get_open_meteo_data(point: Dict) -> Dict[str, Any] or None:
-    """ [Open-Meteo API] 気温と天気コードを取得（リトライ機能付き）"""
+    """ [Open-Meteo API] Get temperature and weather code (with retry) """
     dt_object_utc = datetime.fromtimestamp(point['timestamp'], tz=timezone.utc)
     is_past = dt_object_utc.date() < datetime.now(timezone.utc).date()
     
@@ -119,13 +119,13 @@ def _get_open_meteo_data(point: Dict) -> Dict[str, Any] or None:
             }
         except requests.exceptions.RequestException as e:
             if attempt == 2:
-                print(f"エラー: Open-Meteo APIから情報を取得できませんでした: {e}")
+                print(f"Error: Failed to fetch data from Open-Meteo API: {e}")
                 return None
             time.sleep(1)
     return None
 
 def _sample_route_by_distance(route_data_with_timestamps: List, interval_km: float) -> List[Dict]:
-    """ ルートを一定距離ごとにサンプリングする """
+    """ Sample route at regular distance intervals """
     if not route_data_with_timestamps: return []
     
     sampled_points = []
@@ -150,43 +150,37 @@ def _sample_route_by_distance(route_data_with_timestamps: List, interval_km: flo
         cumulative_distance += distance
     return sampled_points
 
-# --- ここからが変更点 (2/2) ---
 def _generate_weather_report(route_data_with_timestamps: List, interval_km: float) -> List[Dict]:
-    """ 2つの天気APIを使い、ルート上の天気レポートを生成する（ロジックを改善） """
+    """ Generate weather report along route using Yahoo & Open-Meteo APIs """
     sampled_points = _sample_route_by_distance(route_data_with_timestamps, interval_km)
     if not sampled_points: return []
 
-    print("[1/2] Yahoo! APIから基本天気情報（降水の有無）を取得中...")
+    print("[1/2] Fetching basic weather info (precipitation) from Yahoo! API...")
     points_with_base_weather = _get_weather_for_points_yahoo(sampled_points)
     
-    print("[2/2] Open-Meteo APIから詳細天気（晴れ/曇り）と気温を取得中...")
+    print("[2/2] Fetching detailed weather (Sunny/Cloudy/Rain) and temperature from Open-Meteo API...")
     for point in points_with_base_weather:
         open_meteo_data = _get_open_meteo_data(point)
         
-        # Step 1: Open-Meteoから気温を取得
+        # Step 1: Add temperature from Open-Meteo
         if open_meteo_data:
             point['weather']['temperature'] = open_meteo_data['temperature']
         else:
             point['weather']['temperature'] = None
 
-        # Step 2: 最終的な天気（晴れ/曇り/雨）を決定するロジック
-        # 優先度1: Yahoo APIが「雨」と判断した場合、最終結果は「雨」
-        if point['weather'].get('description') == '雨':
-            final_description = '雨'
-        # 優先度2: Open-Meteoから情報が取得できた場合、その結果（晴れ/曇り/雨）を採用
+        # Step 2: Final decision of weather (Sunny / Cloudy / Rain)
+        if point['weather'].get('description') == 'Rain':
+            final_description = 'Rain'
         elif open_meteo_data:
             final_description = open_meteo_data['description']
-        # 優先度3: Yahoo APIがAPIエラーになった場合
-        elif point['weather'].get('description') == '（予報なし）':
-            final_description = '（予報なし）'
-        # 上記以外（Yahooは「降水なし」で、Open-Meteoは失敗したケース）は「曇り」をデフォルトとする
+        elif point['weather'].get('description') == 'No forecast':
+            final_description = 'No forecast'
         else:
-            final_description = '曇り'
+            final_description = 'Cloudy'
         
-        # 最終結果を格納
         point['weather']['description'] = final_description
 
-    print("全地点の天気情報取得が完了しました。")
+    print("Weather data retrieval completed for all points.")
     return points_with_base_weather
 
 def simulate_journey_and_get_weather(
@@ -194,14 +188,14 @@ def simulate_journey_and_get_weather(
     start_time: datetime = None
 ) -> List[Dict[str, Any]]:
     """
-    タイムスタンプ付きのルート情報から、各地点の天気情報を取得する。
+    Generate weather info for each point along route with timestamps.
     """
     if not ordered_route_data_with_time:
-        print("エラー: 経路データが空です。"); return []
+        print("Error: Route data is empty."); return []
     if start_time is None:
         start_time = datetime.now()
 
-    print(f"レポート生成を開始します... (シミュレーション開始時刻: {start_time.strftime('%Y-%m-%d %H:%M')})")
+    print(f"Starting report generation... (Simulation start time: {start_time.strftime('%Y-%m-%d %H:%M')})")
     
     start_timestamp = start_time.timestamp()
     route_with_timestamps = []
