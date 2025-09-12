@@ -155,7 +155,7 @@ def _generate_weather_report(route_data_with_timestamps: List, interval_km: floa
     sampled_points = _sample_route_by_distance(route_data_with_timestamps, interval_km)
     if not sampled_points: return []
 
-    print("[1/2] Fetching basic weather info (precipitation) from Yahoo! API...")
+    print(f"[1/2] Fetching basic weather info (precipitation) from Yahoo! API... (Sampling at {interval_km} km intervals)")
     points_with_base_weather = _get_weather_for_points_yahoo(sampled_points)
     
     print("[2/2] Fetching detailed weather (Sunny/Cloudy/Rain) and temperature from Open-Meteo API...")
@@ -185,7 +185,8 @@ def _generate_weather_report(route_data_with_timestamps: List, interval_km: floa
 
 def simulate_journey_and_get_weather(
     ordered_route_data_with_time: List[List[float]],
-    start_time: datetime = None
+    start_time: datetime = None,
+    interval_km: float = 15.0  # <- 修正点1: 引数に interval_km を追加
 ) -> List[Dict[str, Any]]:
     """
     Generate weather info for each point along route with timestamps.
@@ -204,4 +205,5 @@ def simulate_journey_and_get_weather(
         absolute_timestamp = start_timestamp + elapsed_seconds
         route_with_timestamps.append([lat, lon, absolute_timestamp])
     
-    return _generate_weather_report(route_with_timestamps, interval_km=15.0)
+    # <- 修正点2: ハードコードされていた値を、引数で受け取った interval_km に変更
+    return _generate_weather_report(route_with_timestamps, interval_km=interval_km)
