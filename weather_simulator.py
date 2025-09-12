@@ -215,7 +215,7 @@ def simulate_journey_and_get_weather(
             total_distance_km += haversine(prev_pt[0], prev_pt[1], curr_pt[0], curr_pt[1])
 
     # デフォルトのサンプリング間隔 (km)
-    interval_km = 15.0
+    interval_km = 1.0
     
     if total_distance_km > 0:
         # デフォルト間隔(15km)でサンプリングした場合のポイント数を概算（始点を含む）
