@@ -155,7 +155,7 @@ def _generate_weather_report(route_data_with_timestamps: List, interval_km: floa
     sampled_points = _sample_route_by_distance(route_data_with_timestamps, interval_km)
     if not sampled_points: return []
 
-    print(f"[1/2] Fetching basic weather info (precipitation) from Yahoo! API... (Sampling at {interval_km} km intervals)")
+    print("[1/2] Fetching basic weather info (precipitation) from Yahoo! API...")
     points_with_base_weather = _get_weather_for_points_yahoo(sampled_points)
     
     print("[2/2] Fetching detailed weather (Sunny/Cloudy/Rain) and temperature from Open-Meteo API...")
@@ -185,8 +185,7 @@ def _generate_weather_report(route_data_with_timestamps: List, interval_km: floa
 
 def simulate_journey_and_get_weather(
     ordered_route_data_with_time: List[List[float]],
-    start_time: datetime = None,
-    interval_km: float = 15.0  # <- 修正点1: 引数に interval_km を追加
+    start_time: datetime = None
 ) -> List[Dict[str, Any]]:
     """
     Generate weather info for each point along route with timestamps.
@@ -205,5 +204,42 @@ def simulate_journey_and_get_weather(
         absolute_timestamp = start_timestamp + elapsed_seconds
         route_with_timestamps.append([lat, lon, absolute_timestamp])
     
-    # <- 修正点2: ハードコードされていた値を、引数で受け取った interval_km に変更
+    # --- ▼▼▼ ここからが修正箇所 ▼▼▼ ---
+
+    # ルートの総距離を計算し、データに応じた最適なサンプリング間隔を自動設定する
+    total_distance_km = 0.0
+    if len(route_with_timestamps) > 1:
+        for i in range(1, len(route_with_timestamps)):
+            prev_pt = route_with_timestamps[i-1]
+            curr_pt = route_with_timestamps[i]
+            total_distance_km += haversine(prev_pt[0], prev_pt[1], curr_pt[0], curr_pt[1])
+
+    # デフォルトのサンプリング間隔 (km)
+    interval_km = 15.0
+    
+    if total_distance_km > 0:
+        # デフォルト間隔(15km)でサンプリングした場合のポイント数を概算（始点を含む）
+        num_points = (total_distance_km // interval_km) + 1
+        
+        # 取得する天気予報ポイント数が極端に少なく/多くならないように調整
+        MIN_POINTS = 5  # 少なくともこれくらいの数のポイントは取得したい
+        MAX_POINTS = 15 # 多くてもこれくらいの数のポイントに抑えたい
+
+        if num_points < MIN_POINTS:
+            # ポイント数が少なすぎる場合、間隔を狭めて MIN_POINTS を確保する
+            # (MIN_POINTS - 1)個の区間ができるように間隔を再計算
+            interval_km = total_distance_km / (MIN_POINTS - 1)
+        elif num_points > MAX_POINTS:
+            # ポイント数が多すぎる場合、間隔を広げて MAX_POINTS に抑える
+            # (MAX_POINTS - 1)個の区間ができるように間隔を再計算
+            interval_km = total_distance_km / (MAX_POINTS - 1)
+            
+        # APIの過剰な呼び出しや計算負荷を防ぐための絶対的な下限を設定
+        HARD_MIN_INTERVAL = 5.0 # 最低でも5km間隔はあける
+        interval_km = max(interval_km, HARD_MIN_INTERVAL)
+
+    print(f"Total route distance: {total_distance_km:.2f} km. Auto-adjusted sampling interval to {interval_km:.2f} km.")
+    
+    # 動的に計算した間隔でレポートを生成
     return _generate_weather_report(route_with_timestamps, interval_km=interval_km)
+    # --- ▲▲▲ ここまでが修正箇所 ▲▲▲ ---
