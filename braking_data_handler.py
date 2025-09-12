@@ -10,7 +10,7 @@ load_dotenv()
 def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dict[str, Any]]:
     """
     指定された座標周辺の急ブレーキイベントをデータベースから最大20件取得する。
-    データが見つからない場合、検索範囲を動的に拡大して再検索を行う。
+    データが見つからない場合、検索範囲を動的に拡大し、最終的には全範囲を検索して必ず見つけ出す。
 
     Args:
         target_lat (float): 中心の緯度
@@ -25,20 +25,14 @@ def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dic
         print("エラー: .envファイルにDATABASE_URLが設定されていません。")
         return []
 
-    # --- ▼▼▼ ここからが修正箇所 ▼▼▼ ---
-
-    # 検索半径を段階的に広げていくためのリスト (単位: km)
-    # 最初は1km、見つからなければ5km、次に10km...と範囲を広げる
+    # 最初に試す、段階的な検索半径のリスト (単位: km)
     search_radii_km = [1.0, 5.0, 10.0, 25.0, 50.0]
     
-    # --- ▲▲▲ ここまでが修正箇所 ▲▲▲ ---
-
     results_list = []
     # 地球の半径 (km)
     EARTH_RADIUS_KM = 6371
 
     # Haversine公式を含むサブクエリを使い、計算結果のdistance_kmで範囲を絞り込む
-    # これにより、指定した半径内での最近傍検索が可能になる
     query = text(f"""
         SELECT
             *
@@ -70,30 +64,46 @@ def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dic
         with engine.connect() as connection:
             print(f"データベースに接続し、({target_lat}, {target_lon}) 周辺の急ブレーキデータを検索しています...")
             
-            # --- ▼▼▼ ここからが修正箇所 ▼▼▼ ---
-
-            # 定義した検索半径でループ処理
+            # --- フェーズ1: 段階的な近傍検索 ---
             for radius in search_radii_km:
                 print(f" -> 半径 {radius} km以内で検索中...")
                 
-                # クエリ実行時に緯度経度と検索半径をパラメータとして渡す
                 result_proxy = connection.execute(query, {
                     "target_lat": target_lat,
                     "target_lon": target_lon,
-                    "radius_km": radius  # 動的な検索半径
+                    "radius_km": radius
                 })
-
-                # SQLAlchemy 2.0+ の Row._mapping を使用して辞書に変換
                 results_list = [dict(row._mapping) for row in result_proxy]
                 
-                # 1件でもデータが見つかったら、その時点でループを終了
+                # データが見つかったら、その時点で即座に結果を返して処理を終了
                 if results_list:
                     print(f" -> {len(results_list)}件のデータを半径 {radius} km以内で見つけました。")
-                    break
+                    return results_list
             
-            # ループが最後まで終わってもデータが見つからなかった場合
-            if not results_list:
-                print(f" -> 半径 {search_radii_km[-1]} km以内ではデータが見つかりませんでした。")
+            # --- ▼▼▼ ここからが修正箇所 ▼▼▼ ---
+
+            # --- フェーズ2: 全範囲検索 (最終手段) ---
+            # 上記のループで見つからなかった場合のみ、以下の処理が実行される
+            print(f" -> 半径 {search_radii_km[-1]} km以内ではデータが見つかりませんでした。")
+            print(" -> 最終手段として、範囲を無制限に広げてデータベース全体を検索します...")
+
+            # 地球の半周より大きい、事実上「無限」とみなせる半径を設定
+            INFINITE_RADIUS_KM = 21000 
+
+            result_proxy = connection.execute(query, {
+                "target_lat": target_lat,
+                "target_lon": target_lon,
+                "radius_km": INFINITE_RADIUS_KM
+            })
+            results_list = [dict(row._mapping) for row in result_proxy]
+
+            if results_list:
+                # 取得したデータの中で最も近いものとの距離を表示
+                nearest_distance = results_list[0]['distance_km']
+                print(f" -> 全範囲を検索し、最も近いデータ({nearest_distance:.2f} km先)を{len(results_list)}件見つけました。")
+            else:
+                # このメッセージが表示されるのは、DBのテーブルが完全に空の場合のみ
+                print(" -> データベースにデータが1件も存在しませんでした。")
             
             # --- ▲▲▲ ここまでが修正箇所 ▲▲▲ ---
 
@@ -101,7 +111,6 @@ def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dic
         print(f"データベースへの接続に失敗しました: {e}")
         return []
     except Exception as e:
-        # クエリの構文エラーなどもここで捕捉
         print(f"予期せぬエラーが発生しました: {e}")
         return []
 
@@ -111,7 +120,6 @@ def get_nearest_braking_events(target_lat: float, target_lon: float) -> List[Dic
 if __name__ == '__main__':
     # テストケース1: 名古屋駅のすぐ近くを指定
     print("--- テストケース1: 名古屋駅周辺 ---")
-    # 名古屋駅の座標
     test_lat_1, test_lon_1 = 35.170694, 136.881637
     nearest_events_1 = get_nearest_braking_events(test_lat_1, test_lon_1)
     if nearest_events_1:
@@ -120,9 +128,9 @@ if __name__ == '__main__':
 
     print("\n" + "="*50 + "\n")
 
-    # テストケース2: 少し離れた場所（鶴舞公園）を指定
-    print("--- テストケース2: 鶴舞公園周辺 ---")
-    test_lat_2, test_lon_2 = 35.155761, 136.921312
+    # テストケース2: 周辺にデータが全くない可能性のある座標（例: 離島）
+    print("--- テストケース2: 沖ノ鳥島周辺（データが非常に遠い場合をシミュレート）---")
+    test_lat_2, test_lon_2 = 20.425556, 136.081389
     nearest_events_2 = get_nearest_braking_events(test_lat_2, test_lon_2)
     if nearest_events_2:
         for event in nearest_events_2:
